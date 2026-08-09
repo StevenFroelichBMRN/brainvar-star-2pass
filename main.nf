@@ -346,6 +346,10 @@ process STAR_PASS2 {
 
     script:
     def quant = params.transcriptome ? 'TranscriptomeSAM GeneCounts' : 'GeneCounts'
+    // On-the-fly sjdb insertion consumes the memory STAR would otherwise use for
+    // BAM sorting, so give the sorter an explicit budget (~45% of the task's RAM).
+    // This does not change alignment or SJ.out.tab in any way.
+    def sortram = (long)(task.memory.toBytes() * 0.45)
     """
     zcat ${gtf} > annotation.gtf
 
@@ -361,6 +365,7 @@ process STAR_PASS2 {
       --quantMode ${quant} \\
       --outSAMunmapped Within --outSAMattributes All \\
       --readFilesCommand zcat \\
+      --limitBAMsortRAM ${sortram} \\
       --outTmpDir \$PWD/_startmp
 
     test -s ${run}_SJ.out.tab
