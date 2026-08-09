@@ -143,6 +143,11 @@ process FETCH_FASTQ {
     export TMPDIR=\$PWD/tmp
     mkdir -p \$TMPDIR
 
+    # s3://sra-pub-run-odp is public. Any AWS_* vars inherited from the Batch task
+    # environment would make the CLI sign the request, which FAILS against a public
+    # bucket when the token is expired or from the wrong account. Strip them.
+    unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE || true
+
     ok=0
 
     # ---------- route A: SRA Open Data mirror ----------
