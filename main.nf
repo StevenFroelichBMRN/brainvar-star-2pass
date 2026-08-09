@@ -121,7 +121,7 @@ process STAR_INDEX {
 
 process FETCH_FASTQ {
     tag "$run"
-    label 'net'
+    label 'fetch'
     maxForks params.fetch_forks
 
     input:
@@ -131,47 +131,84 @@ process FETCH_FASTQ {
     tuple val(run), path("${run}_R1.fastq.gz"), path("${run}_R2.fastq.gz")
 
     script:
-    // ENA ftp:// paths are served identically over https.
-    // EBI refuses connections (not 4xx — TCP refused) when too many streams
-    // originate from one NAT IP, so: download the mates SERIALLY, with long
-    // randomised backoff, and cap concurrency via params.fetch_forks.
+    // Primary source: NCBI SRA on AWS Open Data (s3://sra-pub-run-odp, us-east-1,
+    // public / --no-sign-request). Cross-region S3 is far faster than transatlantic
+    // FTP and has no per-IP throttle.
+    // Fallback: ENA FTP over https, for runs absent from the mirror
+    // (e.g. SRR5998450 carries an S3 delete-marker).
     def u1 = url1.replaceFirst(/^ftp:\/\//, 'https://')
     def u2 = url2.replaceFirst(/^ftp:\/\//, 'https://')
     """
     set -euo pipefail
+    export TMPDIR=\$PWD/tmp
+    mkdir -p \$TMPDIR
 
-    fetch () {
-      local url="\$1" out="\$2"
-      for attempt in 1 2 3 4 5 6 7 8 9 10; do
-        if wget --continue --timeout=60 --waitretry=30 --tries=3 \
-                --no-verbose -O "\$out" "\$url"; then
-          if gzip -t "\$out" 2>/dev/null; then
-            echo "OK \$out on attempt \$attempt" >&2
+    ok=0
+
+    # ---------- route A: SRA Open Data mirror ----------
+    if aws s3 cp --no-sign-request --region us-east-1 --only-show-errors \
+         s3://sra-pub-run-odp/sra/${run}/${run} ./${run}.sra ; then
+
+      ls -l ./${run}.sra >&2
+
+      if fasterq-dump --split-files --threads ${task.cpus} \
+           --temp \$TMPDIR -O . ./${run}.sra >&2 ; then
+
+        # paired-end expected: exactly _1 and _2, both non-empty, no _3
+        if [ -s ${run}_1.fastq ] && [ -s ${run}_2.fastq ]; then
+          if [ -e ${run}_3.fastq ]; then
+            echo "WARNING: ${run} produced a _3 mate (non-standard); using _1/_2 only" >&2
+          fi
+          ok=1
+        else
+          echo "WARNING: ${run} did not split into two non-empty mates; falling back to ENA" >&2
+          rm -f ${run}_1.fastq ${run}_2.fastq ${run}_3.fastq
+        fi
+      else
+        echo "WARNING: fasterq-dump failed for ${run}; falling back to ENA" >&2
+      fi
+      rm -f ./${run}.sra
+      rm -rf \$TMPDIR/*
+    else
+      echo "WARNING: ${run} not retrievable from SRA mirror; falling back to ENA" >&2
+    fi
+
+    if [ "\$ok" = "1" ]; then
+      # bbduk needs gzip; pigz for speed, gzip as fallback
+      if command -v pigz >/dev/null 2>&1; then
+        pigz -p ${task.cpus} ${run}_1.fastq ${run}_2.fastq
+      else
+        gzip ${run}_1.fastq ${run}_2.fastq
+      fi
+      mv ${run}_1.fastq.gz ${run}_R1.fastq.gz
+      mv ${run}_2.fastq.gz ${run}_R2.fastq.gz
+    else
+      # ---------- route B: ENA FTP over https ----------
+      fetch () {
+        local url="\$1" out="\$2"
+        for attempt in 1 2 3 4 5 6 7 8; do
+          if wget --continue --timeout=60 --tries=3 --no-verbose -O "\$out" "\$url" \
+             && gzip -t "\$out" 2>/dev/null; then
             return 0
           fi
-          echo "gzip check failed for \$out (attempt \$attempt), refetching" >&2
           rm -f "\$out"
-        fi
-        # exponential-ish backoff with jitter, capped
-        local wait=\$(( attempt * 45 + RANDOM % 60 ))
-        echo "attempt \$attempt failed for \$url; sleeping \${wait}s" >&2
-        sleep "\$wait"
-      done
-      echo "FATAL: could not download \$url after 10 attempts" >&2
-      return 1
-    }
+          sleep \$(( attempt * 30 + RANDOM % 45 ))
+        done
+        echo "FATAL: could not download \$url" >&2
+        return 1
+      }
+      fetch '${u1}' ${run}_R1.fastq.gz
+      fetch '${u2}' ${run}_R2.fastq.gz
+    fi
 
-    # stagger task starts so a burst of tasks does not hit EBI simultaneously
-    sleep \$(( RANDOM % 45 ))
-
-    fetch '${u1}' ${run}_R1.fastq.gz
-    sleep \$(( 5 + RANDOM % 15 ))
-    fetch '${u2}' ${run}_R2.fastq.gz
-
+    gzip -t ${run}_R1.fastq.gz
+    gzip -t ${run}_R2.fastq.gz
     test -s ${run}_R1.fastq.gz
     test -s ${run}_R2.fastq.gz
+    rm -rf \$TMPDIR
     """
 }
+
 
 /* rule trim */
 process BBDUK_TRIM {
@@ -330,6 +367,16 @@ process STAR_PASS2 {
 /* ------------------------------------------------------------------ *
  *  Workflow
  * ------------------------------------------------------------------ */
+
+workflow fetch_only {
+    // canary entry point: exercise FETCH_FASTQ only (no index build, no STAR),
+    // so a format/container surprise costs one task instead of a whole cohort.
+    Channel
+        .fromPath(params.samplesheet, checkIfExists: true)
+        .splitCsv(header: true)
+        .map { r -> tuple(r.run_accession, r.fastq_1, r.fastq_2) }
+        | FETCH_FASTQ
+}
 
 workflow {
 
