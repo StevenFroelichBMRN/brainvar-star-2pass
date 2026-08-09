@@ -50,8 +50,16 @@ process FETCH_GENOME {
 
     script:
     """
-    wget --tries=8 --waitretry=15 --continue -O genome.fa.gz '${params.genome_url}'
-    test -s genome.fa.gz
+    set -euo pipefail
+    for a in 1 2 3 4 5 6 7 8; do
+      if wget --continue --timeout=60 --tries=3 --no-verbose -O genome.fa.gz '${params.genome_url}' \\
+         && gzip -t genome.fa.gz 2>/dev/null; then
+        exit 0
+      fi
+      rm -f genome.fa.gz
+      sleep \$(( a * 45 + RANDOM % 60 ))
+    done
+    echo "FATAL: genome download failed" >&2; exit 1
     """
 }
 
@@ -65,8 +73,16 @@ process FETCH_GTF {
 
     script:
     """
-    wget --tries=8 --waitretry=15 --continue -O annotation.gtf.gz '${params.gtf_url}'
-    test -s annotation.gtf.gz
+    set -euo pipefail
+    for a in 1 2 3 4 5 6 7 8; do
+      if wget --continue --timeout=60 --tries=3 --no-verbose -O annotation.gtf.gz '${params.gtf_url}' \\
+         && gzip -t annotation.gtf.gz 2>/dev/null; then
+        exit 0
+      fi
+      rm -f annotation.gtf.gz
+      sleep \$(( a * 45 + RANDOM % 60 ))
+    done
+    echo "FATAL: gtf download failed" >&2; exit 1
     """
 }
 
@@ -106,7 +122,7 @@ process STAR_INDEX {
 process FETCH_FASTQ {
     tag "$run"
     label 'net'
-    maxForks 12
+    maxForks params.fetch_forks
 
     input:
     tuple val(run), val(url1), val(url2)
@@ -115,12 +131,43 @@ process FETCH_FASTQ {
     tuple val(run), path("${run}_R1.fastq.gz"), path("${run}_R2.fastq.gz")
 
     script:
-    // ENA ftp:// paths are served identically over https
+    // ENA ftp:// paths are served identically over https.
+    // EBI refuses connections (not 4xx — TCP refused) when too many streams
+    // originate from one NAT IP, so: download the mates SERIALLY, with long
+    // randomised backoff, and cap concurrency via params.fetch_forks.
     def u1 = url1.replaceFirst(/^ftp:\/\//, 'https://')
     def u2 = url2.replaceFirst(/^ftp:\/\//, 'https://')
     """
-    wget --tries=10 --waitretry=20 --continue -O ${run}_R1.fastq.gz '${u1}'
-    wget --tries=10 --waitretry=20 --continue -O ${run}_R2.fastq.gz '${u2}'
+    set -euo pipefail
+
+    fetch () {
+      local url="\$1" out="\$2"
+      for attempt in 1 2 3 4 5 6 7 8 9 10; do
+        if wget --continue --timeout=60 --waitretry=30 --tries=3 \
+                --no-verbose -O "\$out" "\$url"; then
+          if gzip -t "\$out" 2>/dev/null; then
+            echo "OK \$out on attempt \$attempt" >&2
+            return 0
+          fi
+          echo "gzip check failed for \$out (attempt \$attempt), refetching" >&2
+          rm -f "\$out"
+        fi
+        # exponential-ish backoff with jitter, capped
+        local wait=\$(( attempt * 45 + RANDOM % 60 ))
+        echo "attempt \$attempt failed for \$url; sleeping \${wait}s" >&2
+        sleep "\$wait"
+      done
+      echo "FATAL: could not download \$url after 10 attempts" >&2
+      return 1
+    }
+
+    # stagger task starts so a burst of tasks does not hit EBI simultaneously
+    sleep \$(( RANDOM % 45 ))
+
+    fetch '${u1}' ${run}_R1.fastq.gz
+    sleep \$(( 5 + RANDOM % 15 ))
+    fetch '${u2}' ${run}_R2.fastq.gz
+
     test -s ${run}_R1.fastq.gz
     test -s ${run}_R2.fastq.gz
     """
