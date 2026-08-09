@@ -1,0 +1,7 @@
+sample,run_accession,fastq_1,fastq_2
+ERR351173,ERR351173,ftp://ftp.sra.ebi.ac.uk/vol1/fastq/ERR351/ERR351173/ERR351173_1.fastq.gz,ftp://ftp.sra.ebi.ac.uk/vol1/fastq/ERR351/ERR351173/ERR351173_2.fastq.gz
+ERR348232,ERR348232,ftp://ftp.sra.ebi.ac.uk/vol1/fastq/ERR348/ERR348232/ERR348232_1.fastq.gz,ftp://ftp.sra.ebi.ac.uk/vol1/fastq/ERR348/ERR348232/ERR348232_2.fastq.gz
+SRR8474230,SRR8474230,ftp://ftp.sra.ebi.ac.uk/vol1/fastq/SRR847/000/SRR8474230/SRR8474230_1.fastq.gz,ftp://ftp.sra.ebi.ac.uk/vol1/fastq/SRR847/000/SRR8474230/SRR8474230_2.fastq.gz
+SRR10351676,SRR10351676,ftp://ftp.sra.ebi.ac.uk/vol1/fastq/SRR103/076/SRR10351676/SRR10351676_1.fastq.gz,ftp://ftp.sra.ebi.ac.uk/vol1/fastq/SRR103/076/SRR10351676/SRR10351676_2.fastq.gz
+SRR8474270,SRR8474270,ftp://ftp.sra.ebi.ac.uk/vol1/fastq/SRR847/000/SRR8474270/SRR8474270_1.fastq.gz,ftp://ftp.sra.ebi.ac.uk/vol1/fastq/SRR847/000/SRR8474270/SRR8474270_2.fastq.gz
+SRR10351667,SRR10351667,ftp://ftp.sra.ebi.ac.uk/vol1/fastq/SRR103/067/SRR10351667/SRR10351667_1.fastq.gz,ftp://ftp.sra.ebi.ac.uk/vol1/fastq/SRR103/067/SRR10351667/SRR10351667_2.fastq.gz
